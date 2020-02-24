@@ -124,6 +124,7 @@ func checkKillError(err error) error {
 	}
 	if strings.Contains(err.Error(), "os: process already finished") ||
 		strings.Contains(err.Error(), "container not running") ||
+		strings.Contains(err.Error(), "does not exist") ||
 		err == unix.ESRCH {
 		return errors.Wrapf(errdefs.ErrNotFound, "process already finished")
 	}
