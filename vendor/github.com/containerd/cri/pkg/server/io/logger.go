@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"syscall"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -122,6 +123,8 @@ func redirectLogs(path string, rc io.ReadCloser, w io.Writer, s StreamType, maxL
 		buf       [][]byte
 		length    int
 		bufSize   = defaultBufSize
+		timeBytes = make([]byte, 0, 40)
+		fastBytes = make([]byte, 0, 100)
 	)
 	// Make sure bufSize <= maxLen
 	if maxLen > 0 && maxLen < bufSize {
@@ -129,10 +132,11 @@ func redirectLogs(path string, rc io.ReadCloser, w io.Writer, s StreamType, maxL
 	}
 	r := bufio.NewReaderSize(rc, bufSize)
 	writeLine := func(tag, line []byte) {
-		timestamp := time.Now().AppendFormat(nil, timestampFormat)
-		data := bytes.Join([][]byte{timestamp, stream, tag, line}, delimiter)
-		data = append(data, eol)
-		if _, err := w.Write(data); err != nil {
+		timeBytes = timeBytes[:0]
+		timestamp := fastTimeAppend(timeBytes)
+		fastBytes = fastJoin(fastBytes, [][]byte{timestamp, stream, tag, line}, delimiter)
+		fastBytes = append(fastBytes, eol)
+		if _, err := w.Write(fastBytes); err != nil {
 			logrus.WithError(err).Errorf("Fail to write %q log to log file %q", s, path)
 			// Continue on write error to drain the container output.
 		}
@@ -193,4 +197,35 @@ func redirectLogs(path string, rc io.ReadCloser, w io.Writer, s StreamType, maxL
 		}
 	}
 	logrus.Debugf("Finish redirecting stream %q to log file %q", s, path)
+}
+
+func fastJoin(target []byte, bs [][]byte, sep []byte) []byte {
+	if len(bs) == 0 {
+		return target[:0]
+	}
+	target = target[:cap(target)]
+
+	n := len(sep) * (len(bs) - 1)
+	for _, v := range bs {
+		n += len(v)
+	}
+
+	if n > cap(target) {
+		target = make([]byte, n + 4)
+	}
+	pos := 0
+	pos += copy(target, bs[0])
+	for _, b := range bs[1:] {
+		pos += copy(target[pos:], sep)
+		pos += copy(target[pos:], b)
+	}
+	return target[:n]
+}
+
+func fastTimeAppend(b []byte) []byte {
+	var tv syscall.Timeval
+	if err := syscall.Gettimeofday(&tv); err != nil {
+		return time.Now().AppendFormat(b, timestampFormat)
+	}
+	return time.Unix(tv.Sec, 0).AppendFormat(b, timestampFormat)
 }
